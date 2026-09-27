@@ -1,0 +1,98 @@
+import { notFound } from "next/navigation";
+import { getTranslations, getLocale } from "next-intl/server";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
+import { getProductBySlug } from "@/lib/queries/product-detail";
+import { getProductReviews } from "@/lib/queries/reviews";
+import { localized } from "@/lib/locale";
+import { VariantSelector } from "@/components/variant-selector";
+import { WishlistButton } from "@/components/wishlist-button";
+import { ProductGallery } from "@/components/product-gallery";
+import { ReviewsSection } from "@/components/reviews-section";
+import type { AppLocale } from "@/i18n/request";
+
+type Params = Promise<{ slug: string }>;
+
+export default async function ProductPage({ params }: { params: Params }) {
+  const { slug } = await params;
+  const product = await getProductBySlug(slug);
+
+  if (!product) notFound();
+
+  const locale = (await getLocale()) as AppLocale;
+  const t = await getTranslations("ProductPage");
+
+  // بنجيب حالة الـ wishlist الحقيقية من غير ما نستنى اليوزر يضغط —
+  // من غيرها القلب هيبان "مش محفوظ" حتى لو محفوظ فعلاً، لحد أول ضغطة
+  const session = await auth();
+  let initialSaved = false;
+  if (session?.user) {
+    const existing = await prisma.wishlistItem.findFirst({
+      where: { productId: product.id, wishlist: { userId: session.user.id } },
+      select: { id: true },
+    });
+    initialSaved = !!existing;
+  }
+
+  const reviews = await getProductReviews(product.id, 1, 10);
+
+  // نفس مبدأ Decimal -> number من صفحة الهوم — الـ Client Component
+  // (VariantSelector) محتاج أنواع JS عادية، مش Prisma.Decimal
+  const variants = product.variants.map((v) => ({
+    id: v.id,
+    sku: v.sku,
+    price: v.price.toNumber(),
+    stock: v.stock,
+    optionValueIds: v.optionValues.map((ov) => ov.optionValueId),
+  }));
+
+  const name = localized(locale, product.nameEn, product.nameAr);
+  const description = localized(locale, product.descriptionEn ?? "", product.descriptionAr ?? "");
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="grid gap-10 lg:grid-cols-2">
+        <ProductGallery images={product.images} productName={name} />
+
+        <div>
+          {product.brand && (
+            <p className="font-mono text-xs uppercase tracking-wide text-steel">
+              {product.brand.name}
+            </p>
+          )}
+
+          <div className="mt-1 flex items-start justify-between gap-4">
+            <h1 className="font-display text-2xl font-bold text-ink">
+              {name}
+            </h1>
+            <WishlistButton
+              productId={product.id}
+              initialSaved={initialSaved}
+            />
+          </div>
+
+          {reviews.total > 0 && (
+            <p className="mt-2 text-sm text-steel">
+              {t("reviewSummary", {
+                average: reviews.average.toFixed(1),
+                count: reviews.total,
+              })}
+            </p>
+          )}
+
+          {description && (
+            <p className="mt-4 text-sm leading-relaxed text-steel">
+              {description}
+            </p>
+          )}
+
+          <div className="mt-6">
+            <VariantSelector options={product.options} variants={variants} locale={locale} />
+          </div>
+        </div>
+      </div>
+
+      <ReviewsSection reviews={reviews} />
+    </div>
+  );
+}
