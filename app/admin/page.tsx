@@ -2,16 +2,30 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { auth } from "@/auth";
-import { getAdminStats } from "@/lib/queries/admin-stats";
+import { getAdminStats, type RevenueRange } from "@/lib/queries/admin-stats";
+import { RevenueRangeSelect } from "@/components/admin/revenue-range-select";
 
-export default async function AdminHomePage() {
+const RANGES: RevenueRange[] = ["today", "7d", "30d"];
+
+export const dynamic = "force-dynamic";
+type SearchParams = Promise<{ range?: string }>;
+export default async function AdminHomePage({ searchParams }: { searchParams: SearchParams }) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") redirect("/");
 
+  const { range } = await searchParams;
+  const revenueRange: RevenueRange = RANGES.includes(range as RevenueRange)
+    ? (range as RevenueRange)
+    : "30d";
+
   const [t, stats] = await Promise.all([
     getTranslations("AdminHome"),
-    getAdminStats(),
+    getAdminStats(revenueRange),
   ]);
+
+  const rangeLabel = t(
+    revenueRange === "today" ? "rangeToday" : revenueRange === "7d" ? "range7d" : "range30d",
+  );
 
   const cards = [
     { href: "/admin/orders", title: t("orders"), desc: t("ordersDesc") },
@@ -25,8 +39,8 @@ export default async function AdminHomePage() {
   ];
 
   const statCards = [
-    { label: t("revenue30d"), value: `EGP ${stats.revenue30d.toLocaleString()}` },
-    { label: t("orders30d"), value: stats.orders30d.toLocaleString() },
+    { label: `${t("revenue")} (${rangeLabel})`, value: `EGP ${stats.revenue.toLocaleString()}` },
+    { label: `${t("ordersInRange")} (${rangeLabel})`, value: stats.ordersInRange.toLocaleString() },
     {
       label: t("pendingOrders"),
       value: stats.pendingOrders.toLocaleString(),
@@ -43,7 +57,10 @@ export default async function AdminHomePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 lg:px-8">
-      <h1 className="font-display text-2xl font-bold text-ink">{t("title")}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-2xl font-bold text-ink">{t("title")}</h1>
+        <RevenueRangeSelect currentRange={revenueRange} />
+      </div>
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {statCards.map((stat) =>
